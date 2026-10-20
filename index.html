@@ -30,7 +30,9 @@ body{background:var(--page);color:var(--ink);font-family:var(--jp);margin:0;over
   body{padding-block:24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
   .device{flex:none;width:414px;height:896px;border-radius:44px;transform-origin:center;box-shadow:0 0 0 10px #0d1013,0 0 0 11px #3a4148,0 30px 80px rgba(0,0,0,.5)}
 }
-canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none}
+.camedit canvas{cursor:grab}
+.camedit canvas:active{cursor:grabbing}
 
 /* fake status bar: computer only */
 .sb{position:absolute;top:0;left:0;right:0;height:44px;display:flex;align-items:center;justify-content:space-between;
@@ -259,7 +261,9 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--me)}
       <div class="crow"><span class="clabel">進行</span><input type="range" id="si" min="0" max="1000" value="0"><span class="cval" id="sv">0%</span></div>
       <div class="crow"><span class="clabel">速度</span><input type="range" id="sp" min="0.25" max="2" value="1" step="0.25"><span class="cval" id="spv">x1.0</span></div>
       <div class="crow"><span class="clabel">表記</span><div class="seg" id="nameseg"><button type="button" data-name="TAG-01" class="on">TAG-01</button><button type="button" data-name="こころ">こころ</button></div></div>
-      <div class="hint">地図を長押しでこのパネルを閉じる</div>
+      <div class="crow"><span class="clabel">拡大</span><input type="range" id="zm" min="0.5" max="6" step="0.05" value="1"><span class="cval" id="zmv">x1.00</span></div>
+      <div class="crow"><span class="clabel">視点</span><div class="seg"><button type="button" id="cam-reset">初期の位置・拡大に戻す</button></div></div>
+      <div class="hint">パネル表示中: 地図をドラッグで移動 / 2本指・ホイールで拡大縮小<br>地図を長押しでこのパネルを閉じる</div>
     </div>
   </div>
   <div class="homebar"></div>
@@ -301,6 +305,7 @@ function showMap(blob,save){
 document.getElementById('mapfile').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)showMap(f,true);e.target.value=''});
 DB.get('map2').then(b=>{if(b)showMap(b,false)}).catch(()=>{});
 let progress=0,speed=1,playing=false,last=null,seeking=false;
+DB.get('cam63').then(v=>{if(v&&isFinite(v.z)&&isFinite(v.cx)&&isFinite(v.cy)){view={z:clampZ(v.z),cx:v.cx,cy:v.cy};applyView()}}).catch(()=>{});
 
 /* compass dial ticks */
 (()=>{let h='';for(let i=0;i<72;i++){const a=i*5*Math.PI/180,l=i%18===0?10:i%2===0?6:3,r1=52,r2=r1-l;
@@ -321,8 +326,20 @@ function resize(){
   OY=yTag-M.beaconPos[1]*S;
   const cx=FRAME_CX;
   OX=Math.min(0,Math.max(vw-M.imgW*S,vw/2-cx*S));
+  base={S,OX,OY};applyView();
   $('fabs').style.bottom=$('fabsL').style.bottom=(document.getElementById('ui').offsetHeight+14)+'px';
 }
+/* ユーザー視点: 画面中央に来る地図座標(cx,cy)と基準からの拡大率z。null=初期配置 */
+let base={S:1,OX:0,OY:0},view=null;
+const ZMIN=.5,ZMAX=6,clampZ=z=>Math.max(ZMIN,Math.min(ZMAX,z));
+const curView=()=>view||{z:1,cx:(vw/2-base.OX)/base.S,cy:(vh/2-base.OY)/base.S};
+function applyView(){
+  if(!view){S=base.S;OX=base.OX;OY=base.OY}else{S=base.S*view.z;OX=vw/2-view.cx*S;OY=vh/2-view.cy*S}
+  const z=view?view.z:1,zm=document.getElementById('zm');if(zm&&document.activeElement!==zm)zm.value=z;
+  const zv=document.getElementById('zmv');if(zv)zv.textContent='x'+z.toFixed(2);
+}
+let viewTimer=null;
+const saveView=()=>{clearTimeout(viewTimer);viewTimer=setTimeout(()=>DB.set('cam63',view).catch(()=>{}),300)};
 /* camera for the locate button: z = zoom, cam.t = 0 (overview) .. 1 (centered on me) */
 const ZOOM=1.9;const cam={t:0,goal:0,fx:0,fy:0,cx:0,cy:0};let topH0=0,uiH0=0;
 const camApply=(px,py)=>{const t=cam.t,z=1+(ZOOM-1)*t,cx=cam.cx,cy=cam.cy;
@@ -452,9 +469,31 @@ $('b-menu').onclick=()=>{menu.classList.add('open');menu.setAttribute('aria-hidd
 const closeMenu=()=>{menu.classList.remove('open');menu.setAttribute('aria-hidden','true')};
 $('m-close').onclick=closeMenu;menu.addEventListener('click',e=>{if(e.target===menu)closeMenu()});
 new ResizeObserver(()=>{uiH0=document.getElementById('ui').offsetHeight;$('fabs').style.bottom=$('fabsL').style.bottom=(document.getElementById('ui').offsetHeight+14)+'px'}).observe(document.getElementById('ui'));
-wrap.addEventListener('pointerdown',e=>{if(e.target.closest('#ui,.fabs,#menu,.toast,#picker'))return;pt=setTimeout(()=>{$('ctrl').hidden=!$('ctrl').hidden},600)});
+wrap.addEventListener('pointerdown',e=>{if(e.target.closest('#ui,.fabs,#menu,.toast,#picker'))return;if(ptrs.size>=1){clearTimeout(pt);return}pt=setTimeout(()=>{$('ctrl').hidden=!$('ctrl').hidden;wrap.classList.toggle('camedit',!$('ctrl').hidden);ptrs.clear()},600)});
 ['pointerup','pointerleave','pointercancel','pointermove'].forEach(ev=>wrap.addEventListener(ev,e=>{if(ev!=='pointermove'||Math.abs(e.movementX)+Math.abs(e.movementY)>6)clearTimeout(pt)}));
 wrap.addEventListener('contextmenu',e=>e.preventDefault());
+
+/* 視点操作(操作パネル表示中のみ): 1本指ドラッグ=移動 / 2本指=拡大縮小+移動 / ホイール=カーソル位置を中心に拡大縮小 */
+const ptrs=new Map();let g0=null;
+const camOn=()=>!document.getElementById('ctrl').hidden;
+const local=e=>{const r=wrap.getBoundingClientRect();return[(e.clientX-r.left)*vw/r.width,(e.clientY-r.top)*vh/r.height]};
+function gStart(){const p=[...ptrs.values()],v={...curView()};
+  g0=p.length>=2?{v,m:[(p[0][0]+p[1][0])/2,(p[0][1]+p[1][1])/2],d:Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1])||1}:p.length?{v,a:p[0]}:null}
+function zoomAt(v,z,from,to){ // fromの下にあった地図上の点がtoに来るように拡大率zで配置
+  const s0=base.S*v.z,s1=base.S*z,mx=v.cx+(from[0]-vw/2)/s0,my=v.cy+(from[1]-vh/2)/s0;
+  return{z,cx:mx-(to[0]-vw/2)/s1,cy:my-(to[1]-vh/2)/s1}}
+wrap.addEventListener('pointerdown',e=>{if(!camOn()||e.target.closest('#ui,.fabs,#menu,.toast,#picker'))return;ptrs.set(e.pointerId,local(e));gStart()});
+addEventListener('pointermove',e=>{if(!ptrs.has(e.pointerId)||!g0)return;ptrs.set(e.pointerId,local(e));const p=[...ptrs.values()];
+  if(p.length>=2&&g0.m){const m=[(p[0][0]+p[1][0])/2,(p[0][1]+p[1][1])/2],d=Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1]);
+    view=zoomAt(g0.v,clampZ(g0.v.z*d/g0.d),g0.m,m)}
+  else if(g0.a){const s=base.S*g0.v.z;view={z:g0.v.z,cx:g0.v.cx-(p[0][0]-g0.a[0])/s,cy:g0.v.cy-(p[0][1]-g0.a[1])/s}}
+  applyView()});
+const gEnd=e=>{if(!ptrs.delete(e.pointerId))return;gStart();saveView()};
+['pointerup','pointercancel'].forEach(ev=>addEventListener(ev,gEnd));
+wrap.addEventListener('wheel',e=>{if(!camOn()||e.target.closest('#ui,.fabs,#menu,.toast,#picker'))return;e.preventDefault();
+  const v=curView(),p=local(e);view=zoomAt(v,clampZ(v.z*Math.exp(-e.deltaY*.0015)),p,p);applyView();saveView()},{passive:false});
+$('zm').oninput=e=>{view={...curView(),z:clampZ(+e.target.value)};applyView();saveView()};
+$('cam-reset').onclick=()=>{view=null;applyView();DB.set('cam63',null).catch(()=>{})};
 addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();$('cbtn-play').click()}});
 
 addEventListener('resize',resize);
