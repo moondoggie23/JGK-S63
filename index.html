@@ -262,8 +262,9 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--me)}
       <div class="crow"><span class="clabel">速度</span><input type="range" id="sp" min="0.25" max="2" value="1" step="0.25"><span class="cval" id="spv">x1.0</span></div>
       <div class="crow"><span class="clabel">表記</span><div class="seg" id="nameseg"><button type="button" data-name="TAG-01" class="on">TAG-01</button><button type="button" data-name="こころ">こころ</button></div></div>
       <div class="crow"><span class="clabel">拡大</span><input type="range" id="zm" min="0.5" max="6" step="0.05" value="1"><span class="cval" id="zmv">x1.00</span></div>
-      <div class="crow"><span class="clabel">視点</span><div class="seg"><button type="button" id="cam-reset">初期の位置・拡大に戻す</button></div></div>
-      <div class="hint">パネル表示中: 地図をドラッグで移動 / 2本指・ホイールで拡大縮小<br>地図を長押しでこのパネルを閉じる</div>
+      <div class="crow"><span class="clabel">追従</span><div class="seg" id="trackseg"><button type="button" data-tr="1" class="on">タグを中央</button><button type="button" data-tr="0">手動</button></div></div>
+      <div class="crow"><span class="clabel">視点</span><div class="seg"><button type="button" id="cam-reset">初期に戻す(タグ追従 x2.2)</button></div></div>
+      <div class="hint">パネル表示中: 2本指・ホイールで拡大縮小 / ドラッグで移動(手動に切替)<br>地図を長押しでこのパネルを閉じる</div>
     </div>
   </div>
   <div class="homebar"></div>
@@ -305,7 +306,8 @@ function showMap(blob,save){
 document.getElementById('mapfile').addEventListener('change',e=>{const f=e.target.files&&e.target.files[0];if(f)showMap(f,true);e.target.value=''});
 DB.get('map2').then(b=>{if(b)showMap(b,false)}).catch(()=>{});
 let progress=0,speed=1,playing=false,last=null,seeking=false;
-DB.get('cam63').then(v=>{if(v&&isFinite(v.z)&&isFinite(v.cx)&&isFinite(v.cy)){view={z:clampZ(v.z),cx:v.cx,cy:v.cy};applyView()}}).catch(()=>{});
+DB.get('cam63t').then(c=>{if(!c)return;if(isFinite(c.tz))tz=clampZ(c.tz);const v=c.view;
+  if(v&&isFinite(v.z)&&isFinite(v.cx)&&isFinite(v.cy))view={z:clampZ(v.z),cx:v.cx,cy:v.cy};setTrack(c.track!==false);applyView()}).catch(()=>{});
 
 /* compass dial ticks */
 (()=>{let h='';for(let i=0;i<72;i++){const a=i*5*Math.PI/180,l=i%18===0?10:i%2===0?6:3,r1=52,r2=r1-l;
@@ -331,6 +333,8 @@ function resize(){
 }
 /* ユーザー視点: 画面中央に来る地図座標(cx,cy)と基準からの拡大率z。null=初期配置 */
 let base={S:1,OX:0,OY:0},view=null;
+const TRACK_ZOOM=2.2; // タグ追従時の初期拡大率
+let track=true,tz=TRACK_ZOOM; // track=true: タグを地図表示エリアの中央に保つ
 const ZMIN=.5,ZMAX=6,clampZ=z=>Math.max(ZMIN,Math.min(ZMAX,z));
 const curView=()=>view||{z:1,cx:(vw/2-base.OX)/base.S,cy:(vh/2-base.OY)/base.S};
 function applyView(){
@@ -339,7 +343,16 @@ function applyView(){
   const zv=document.getElementById('zmv');if(zv)zv.textContent='x'+z.toFixed(2);
 }
 let viewTimer=null;
-const saveView=()=>{clearTimeout(viewTimer);viewTimer=setTimeout(()=>DB.set('cam63',view).catch(()=>{}),300)};
+const saveView=()=>{clearTimeout(viewTimer);viewTimer=setTimeout(()=>DB.set('cam63t',{track,tz,view}).catch(()=>{}),300)};
+function setTrack(v){track=!!v;document.querySelectorAll('#trackseg button').forEach(b=>b.classList.toggle('on',(b.dataset.tr==='1')===track));
+  if(!track&&!view)view={...curView()}}
+/* タグが上下バーの間の中央に来る視点 */
+/* 地図の端の外(白地)が見えそうなときだけ、その分タグを中央からずらす */
+function trackView(tag){const s=base.S*tz,midY=topH0+(vh-topH0-uiH0)/2,W=M.imgW*s,H=M.imgH*s;
+  let ox=vw/2-tag[0]*s,oy=midY-tag[1]*s;
+  if(W>=vw)ox=Math.min(0,Math.max(vw-W,ox));
+  if(H>=vh-uiH0-topH0)oy=Math.min(topH0,Math.max(vh-uiH0-H,oy));
+  view={z:tz,cx:(vw/2-ox)/s,cy:(vh/2-oy)/s};applyView()}
 /* camera for the locate button: z = zoom, cam.t = 0 (overview) .. 1 (centered on me) */
 const ZOOM=1.9;const cam={t:0,goal:0,fx:0,fy:0,cx:0,cy:0};let topH0=0,uiH0=0;
 const camApply=(px,py)=>{const t=cam.t,z=1+(ZOOM-1)*t,cx=cam.cx,cy=cam.cy;
@@ -407,6 +420,7 @@ function draw(ts){
   ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#fff';ctx.fillRect(0,0,vw,vh);
   // I stay put; the tag drives along the lakeside road away from me, then north up the main road
   const me=ME_POS,tf=progress,tag=tagAt(tf);
+  if(track)trackView(tag);
   cam.fx=OX+me[0]*S;cam.fy=OY+me[1]*S;cam.cx=vw/2;cam.cy=topH0+(vh-topH0-uiH0)/2;
   cam.t+=(cam.goal-cam.t)*.08;if(Math.abs(cam.goal-cam.t)<.001)cam.t=cam.goal;
   if(M.img.complete&&M.img.naturalWidth){ctx.imageSmoothingQuality='high';const[ix,iy]=sc(0,0),zz=1+(ZOOM-1)*cam.t;ctx.drawImage(M.img,ix,iy,M.imgW*S*zz,M.imgH*S*zz)}
@@ -485,15 +499,16 @@ function zoomAt(v,z,from,to){ // fromの下にあった地図上の点がtoに�
 wrap.addEventListener('pointerdown',e=>{if(!camOn()||e.target.closest('#ui,.fabs,#menu,.toast,#picker'))return;ptrs.set(e.pointerId,local(e));gStart()});
 addEventListener('pointermove',e=>{if(!ptrs.has(e.pointerId)||!g0)return;ptrs.set(e.pointerId,local(e));const p=[...ptrs.values()];
   if(p.length>=2&&g0.m){const m=[(p[0][0]+p[1][0])/2,(p[0][1]+p[1][1])/2],d=Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1]);
-    view=zoomAt(g0.v,clampZ(g0.v.z*d/g0.d),g0.m,m)}
-  else if(g0.a){const s=base.S*g0.v.z;view={z:g0.v.z,cx:g0.v.cx-(p[0][0]-g0.a[0])/s,cy:g0.v.cy-(p[0][1]-g0.a[1])/s}}
+    view=zoomAt(g0.v,clampZ(g0.v.z*d/g0.d),g0.m,m);if(track)tz=view.z}
+  else if(g0.a){if(track){if(Math.hypot(p[0][0]-g0.a[0],p[0][1]-g0.a[1])<8)return;setTrack(false);g0={v:{...curView()},a:p[0]};return}const s=base.S*g0.v.z;view={z:g0.v.z,cx:g0.v.cx-(p[0][0]-g0.a[0])/s,cy:g0.v.cy-(p[0][1]-g0.a[1])/s}}
   applyView()});
 const gEnd=e=>{if(!ptrs.delete(e.pointerId))return;gStart();saveView()};
 ['pointerup','pointercancel'].forEach(ev=>addEventListener(ev,gEnd));
 wrap.addEventListener('wheel',e=>{if(!camOn()||e.target.closest('#ui,.fabs,#menu,.toast,#picker'))return;e.preventDefault();
-  const v=curView(),p=local(e);view=zoomAt(v,clampZ(v.z*Math.exp(-e.deltaY*.0015)),p,p);applyView();saveView()},{passive:false});
-$('zm').oninput=e=>{view={...curView(),z:clampZ(+e.target.value)};applyView();saveView()};
-$('cam-reset').onclick=()=>{view=null;applyView();DB.set('cam63',null).catch(()=>{})};
+  const v=curView(),p=local(e);view=zoomAt(v,clampZ(v.z*Math.exp(-e.deltaY*.0015)),p,p);if(track)tz=view.z;applyView();saveView()},{passive:false});
+$('zm').oninput=e=>{const z=clampZ(+e.target.value);if(track)tz=z;view={...curView(),z};applyView();saveView()};
+document.querySelectorAll('#trackseg button').forEach(b=>b.onclick=()=>{setTrack(b.dataset.tr==='1');saveView()});
+$('cam-reset').onclick=()=>{tz=TRACK_ZOOM;setTrack(true);saveView()};
 addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();$('cbtn-play').click()}});
 
 addEventListener('resize',resize);
