@@ -266,7 +266,7 @@ input[type=range]{flex:1;min-width:0;accent-color:var(--me)}
       <div class="crow"><span class="clabel">タグ向き</span><div class="seg" id="dirseg"><button type="button" data-dr="0" class="on">南→北(湖へ)</button><button type="button" data-dr="1">北→南</button></div></div>
       <div class="crow"><span class="clabel">ピンチ</span><div class="seg" id="pinchseg"><button type="button" data-pn="0" class="on">パネル表示中のみ</button><button type="button" data-pn="1">常時オン</button></div></div>
       <div class="crow"><span class="clabel">視点</span><div class="seg"><button type="button" id="cam-reset">初期に戻す(タグ追従 x2.2)</button></div></div>
-      <div class="hint">2本指・ホイールで拡大縮小 / パネル表示中はドラッグで移動(手動に切替)<br>地図を長押しでこのパネルを閉じる</div>
+      <div class="hint">2本指・ホイールで拡大縮小 / パネル表示中はドラッグで移動(手動に切替)<br>キー: Enter再生 ←→10% R最初 ↑↓拡大 T追従 C初期視点 U更新 L現在地 N表記 P パネル<br>地図を長押しでこのパネルを閉じる</div>
     </div>
   </div>
   <div class="homebar"></div>
@@ -526,12 +526,32 @@ document.querySelectorAll('#dirseg button').forEach(b=>b.onclick=()=>{setDir(b.d
 DB.get('dir63').then(v=>{if(v===true)setDir(true)}).catch(()=>{});
 document.querySelectorAll('#pinchseg button').forEach(b=>b.onclick=()=>{setPinch(b.dataset.pn==='1');saveView()});
 $('cam-reset').onclick=()=>{tz=TRACK_ZOOM;setTrack('tag');saveView()};
-/* 再生/一時停止のキー操作(リモコン・ワイヤレスキーボード用): Enter / テンキーEnter / Space
-   ボタンにフォーカスがあってもそのボタンは押さず再生だけ切替。メニュー・地図選択画面の表示中と押しっぱなしの連打は無視 */
+/* ===== 遠隔キーボード操作(Bluetoothキーボード・リモコン用) =====
+   画面には何も表示しない(撮影中に余計な表示を出さない)。日本語入力中でも効くようキーの物理位置(e.code)で判定
+   Enter/Space 再生・一時停止 | ←→ 10%戻る・進む | Home/R 最初に戻す
+   ↑↓ / +- 拡大・縮小(押しっぱなしで連続) | T 追従切替(タグ→自分→中間→手動) | C 初期視点(タグ追従 x2.2)
+   U 更新 | L 現在地ボタン | N 表記切替 | P 操作パネル開閉 | Esc メニューを閉じる */
+const zoomBy=k=>{const z=clampZ(curView().z*k);if(track)tz=z;view={...curView(),z};applyView();saveView()};
+const TRACK_ORDER=['tag','me','mid',''];
+const KEYS={
+  Enter:()=>$('cbtn-play').click(),NumpadEnter:()=>$('cbtn-play').click(),Space:()=>$('cbtn-play').click(),
+  ArrowLeft:()=>$('b-back').click(),ArrowRight:()=>$('b-fwd').click(),
+  Home:()=>$('b-reset').click(),KeyR:()=>$('b-reset').click(),
+  ArrowUp:()=>zoomBy(1.08),ArrowDown:()=>zoomBy(1/1.08),
+  Equal:()=>zoomBy(1.08),NumpadAdd:()=>zoomBy(1.08),Semicolon:()=>zoomBy(1.08),Minus:()=>zoomBy(1/1.08),NumpadSubtract:()=>zoomBy(1/1.08),
+  KeyT:()=>{setTrack(TRACK_ORDER[(TRACK_ORDER.indexOf(track)+1)%TRACK_ORDER.length]);saveView()},
+  KeyC:()=>$('cam-reset').click(),KeyU:()=>$('b-refresh').click(),KeyL:()=>$('b-locate').click(),
+  KeyN:()=>{const b=[...document.querySelectorAll('#nameseg button')],i=b.findIndex(x=>x.classList.contains('on'));b[(i+1)%b.length].click()},
+  KeyP:()=>{const c=document.getElementById('ctrl');c.hidden=!c.hidden;wrap.classList.toggle('camedit',!c.hidden)}
+};
+const REPEATABLE=new Set(['ArrowUp','ArrowDown','Equal','NumpadAdd','Semicolon','Minus','NumpadSubtract']);
 addEventListener('keydown',e=>{
-  if(e.code!=='Space'&&e.code!=='Enter'&&e.code!=='NumpadEnter'&&e.key!=='Enter')return;
-  if(menu.classList.contains('open')||!document.getElementById('picker').hidden)return;
-  e.preventDefault();if(e.repeat)return;$('cbtn-play').click()},true);
+  if(e.ctrlKey||e.metaKey||e.altKey)return; // ブラウザのショートカットは邪魔しない
+  if(menu.classList.contains('open')){if(e.code==='Escape'){e.preventDefault();closeMenu()}return}
+  if(!document.getElementById('picker').hidden)return; // 地図選択画面では無効
+  const code=e.code||(e.key==='Enter'?'Enter':''),fn=KEYS[code];if(!fn)return;
+  e.preventDefault();e.stopPropagation(); // フォーカス中のボタンやスライダーは動かさず、キー操作だけ実行
+  if(e.repeat&&!REPEATABLE.has(code))return;fn()},true);
 
 addEventListener('resize',resize);
 (document.fonts?document.fonts.ready:Promise.resolve()).then(resize);
